@@ -1,0 +1,1 @@
+This file contains all the required contents for -- batch processing -- the whisper_processor.py -- is the script for the whisper_process and azure_manager to handle all the azure based operations and handles all the blob storages 

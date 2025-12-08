@@ -1,0 +1,57 @@
+==============================================================================
+AZURE BATCH PROCESSING - CRON JOB
+==============================================================================
+Started: 2025-12-08 11:45:15
+PID: 424705
+Lock File: /tmp/whisper_process.lock
+Script Directory: /home/daworker/whisper_testing/production_grade_v2
+Log File: /home/daworker/whisper_testing/production_grade_v2/logs/cron_20251208_114515.log
+==============================================================================
+
+Using Python: python3 (/home/daworker/whisper_env/bin/python3)
+Python Version: Python 3.12.3
+
+/home/daworker/whisper_testing/production_grade_v2/azure_manager.py:298: SyntaxWarning: invalid escape sequence '\S'
+  print(f"\Scan complete:")
+================================================================================
+AZURE STORAGE CONNECTION
+================================================================================
+Recordings: recordings
+Transcriptions: transcriptions
+Processed: processed-recordings
+Batch Size: 10
+✓ Connected successfully
+Account: StorageV2
+================================================================================
+
+Temp Directory: temp_audio
+Email: ENABLED
+  → sanjubandaru14@gmail.com, sanjeev@dachido.com, philip.derbeko@dachido.com, sudip.sinha@dachido.com
+
+================================================================================
+BATCH PROCESSING - ALL PENDING FILES
+================================================================================
+Batch size: 10
+================================================================================
+
+Scanning for pending files...
+\Scan complete:
+  Total blobs: 0
+  Pending: 0
+  Orphans: 0
+
+✓ No pending files
+
+Email sent to 4 recipient(s)
+
+==============================================================================
+CRON JOB FINISHED
+==============================================================================
+Finished: 2025-12-08 11:45:18
+Exit Code: 0
+Status: ✓ SUCCESS
+==============================================================================
+
+Cleaning up old logs (keeping last 30 days)...
+✓ No old logs to delete
+

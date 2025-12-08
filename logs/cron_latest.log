@@ -1,0 +1,38 @@
+================================================================================
+BATCH PROCESSING STARTED - Mon Dec  8 14:00:01 UTC 2025
+================================================================================
+
+================================================================================
+AZURE STORAGE CONNECTION
+================================================================================
+Recordings: recordings
+Transcriptions: transcriptions
+Processed: processed-recordings
+Batch Size: 10
+✓ Connected successfully
+Account: StorageV2
+================================================================================
+
+Temp Directory: temp_audio
+Email: ENABLED
+  → sanjubandaru14@gmail.com, sanjeev@dachido.com, philip.derbeko@dachido.com, sudip.sinha@dachido.com
+
+================================================================================
+BATCH PROCESSING - ALL PENDING FILES
+================================================================================
+Batch size: 10
+================================================================================
+
+Scanning for pending files...
+Scan complete:
+  Total blobs: 0
+  Pending: 0
+  Orphans: 0
+
+✓ No pending files
+
+Email sent to 4 recipient(s)
+
+================================================================================
+BATCH PROCESSING COMPLETED - Mon Dec  8 14:00:05 UTC 2025
+================================================================================
