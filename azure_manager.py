@@ -90,6 +90,10 @@ class EmailNotifier:
             msg['From'] = Config.EMAIL_FROM
             msg['To'] = ', '.join(Config.EMAIL_RECIPIENTS)
             
+            if stats.get('processed', 0) == 0:
+                print(f"No entities were processed - skipping email")
+                return True
+
             # Create both text and HTML versions
             text_body = self._create_text_report(stats, errors)
             html_body = self._create_html_report(stats, errors)
