@@ -21,7 +21,6 @@ MODEL_CONFIG = {
 BEAM_SIZE = int(os.environ.get('WHISPER_BEAM_SIZE', '5'))
 VAD_FILTER = True
 VAD_PARAMS = {"min_silence_duration_ms": 500}
-
 SUPPORTED_LANGUAGES = {"en": "English", "hi": "Hindi", "ta": "Tamil", "te": "Telugu",}
 
 logging.basicConfig(
@@ -33,14 +32,12 @@ logger = logging.getLogger(__name__)
 def deduplicate_text(text: str) -> str:
     """
     Remove duplicate consecutive sentences or phrases.
-    
     Simple deduplication by removing consecutive duplicate sentences.
     """
     if not text:
         return text
     
     sentences = [s.strip() for s in text.split('.') if s.strip()]
-    
     if not sentences:
         return text
     
@@ -74,7 +71,6 @@ class TranslationResult:
     def to_json(self) -> str:
         return json.dumps(self.to_dict(), indent=2, ensure_ascii=False)
 
-
 class WhisperProcessor:
     """
     Stateless Whisper processor
@@ -102,7 +98,6 @@ class WhisperProcessor:
             logger.info(f"✓ Model loaded in {load_time:.2f}s")
             logger.info("✓ Ready")
             logger.info("="*70 + "\n")
-            
         except Exception as e:
             logger.error(f"Initialization failed: {e}")
             raise
@@ -110,7 +105,9 @@ class WhisperProcessor:
     def process_audio_file(self, audio_path: str) -> Dict:
         """
         Process audio → English translation
-        Returns: Dictionary with translation result
+        
+        Returns:
+            Dictionary with translation result
         """
         start_time = time.time()
         filename = Path(audio_path).name
@@ -153,7 +150,7 @@ class WhisperProcessor:
             confidence = info.language_probability
             lang_name = SUPPORTED_LANGUAGES.get(lang_code, lang_code.upper())
             
-            logger.info(f"        → Detected: {lang_name} ({lang_code}) - {confidence:.1%}")
+            logger.info(f"  → Detected: {lang_name} ({lang_code}) - {confidence:.1%}")
             
             result.language_code = lang_code
             result.detected_language = lang_name
@@ -175,27 +172,26 @@ class WhisperProcessor:
             result.translation = translation
             result.translation_time = translation_time
             
-            # Validate
+            # Validate - check for empty or whitespace-only translation
             if not translation or not translation.strip():
                 raise ValueError("Translation is empty")
             
             result.word_count = len(translation.split())
             result.status = 'success'
             
-            logger.info(f"        ✓ Success - {translation_time:.2f}s")
-            logger.info(f"        → {result.word_count} words")
+            logger.info(f"  ✓ Success - {translation_time:.2f}s")
+            logger.info(f"  → {result.word_count} words")
             
         except Exception as e:
             result.status = 'failed'
             result.error = str(e)
-            logger.error(f"        ✗ Failed: {e}")
+            logger.error(f"  ✗ Failed: {e}")
         
         return result.to_dict()
     
     def cleanup(self):
         """Cleanup (for compatibility)"""
         pass
-
 
 def main():
     """Test processor"""
@@ -206,7 +202,6 @@ def main():
         sys.exit(1)
     
     audio_file = sys.argv[1]
-    
     if not Path(audio_file).exists():
         print(f"Error: File not found: {audio_file}")
         sys.exit(1)
@@ -229,13 +224,12 @@ def main():
             print("\n✓ Success!")
         else:
             print(f"\n✗ Failed: {result.get('error')}")
-        
+    
     except Exception as e:
         print(f"\nError: {e}")
         import traceback
         traceback.print_exc()
         sys.exit(1)
-
 
 if __name__ == "__main__":
     main()

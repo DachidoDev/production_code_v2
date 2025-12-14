@@ -10,14 +10,13 @@ from datetime import datetime
 from azure.storage.blob import BlobServiceClient
 from azure.core.exceptions import ResourceNotFoundError
 
-
 class Config:
     """Environment-based configuration"""
-    
     CONNECTION_STRING = os.environ.get('AZURE_STORAGE_CONNECTION_STRING', '')
     RECORDINGS_CONTAINER = os.environ.get('RECORDINGS_CONTAINER', 'recordings')
     TRANSCRIPTIONS_CONTAINER = os.environ.get('TRANSCRIPTIONS_CONTAINER', 'transcriptions')
     PROCESSED_CONTAINER = os.environ.get('PROCESSED_RECORDINGS_CONTAINER', 'processed-recordings')
+    FAILED_CONTAINER = os.environ.get('FAILED_RECORDINGS_CONTAINER', 'failedrecordings')
     BATCH_SIZE = int(os.environ.get('BATCH_SIZE', '10'))
     
     # Email configuration
@@ -36,7 +35,6 @@ class Config:
                 "AZURE_STORAGE_CONNECTION_STRING is required!\n"
                 "Set it in your .env file or environment"
             )
-        
         if not cls.SMTP_USERNAME or not cls.SMTP_PASSWORD:
             print("WARNING: Email credentials not configured - notifications disabled")
     
@@ -49,6 +47,7 @@ class Config:
         print(f"Recordings: {cls.RECORDINGS_CONTAINER}")
         print(f"Transcriptions: {cls.TRANSCRIPTIONS_CONTAINER}")
         print(f"Processed: {cls.PROCESSED_CONTAINER}")
+        print(f"Failed: {cls.FAILED_CONTAINER}")
         print(f"Batch Size: {cls.BATCH_SIZE}")
         
         try:
@@ -62,7 +61,6 @@ class Config:
             print(f"✗ Connection failed: {e}")
             print("="*80 + "\n")
             raise
-
 
 class EmailNotifier:
     """Send email reports for batch processing"""
@@ -80,6 +78,11 @@ class EmailNotifier:
             print("Email notifications disabled (missing config)")
             return False
         
+        # Skip email if no recordings were processed
+        if stats.get('processed', 0) == 0:
+            print("No recordings processed - skipping email")
+            return True
+        
         try:
             import smtplib
             from email.mime.text import MIMEText
@@ -90,10 +93,6 @@ class EmailNotifier:
             msg['From'] = Config.EMAIL_FROM
             msg['To'] = ', '.join(Config.EMAIL_RECIPIENTS)
             
-            if stats.get('processed', 0) == 0:
-                print(f"No entities were processed - skipping email")
-                return True
-
             # Create both text and HTML versions
             text_body = self._create_text_report(stats, errors)
             html_body = self._create_html_report(stats, errors)
@@ -107,11 +106,11 @@ class EmailNotifier:
                 server.login(Config.SMTP_USERNAME, Config.SMTP_PASSWORD)
                 server.send_message(msg)
             
-            print(f"Email sent to {len(Config.EMAIL_RECIPIENTS)} recipient(s)")
+            print(f"✓ Email sent to {len(Config.EMAIL_RECIPIENTS)} recipient(s)")
             return True
-            
+        
         except Exception as e:
-            print(f"Email failed: {e}")
+            print(f"✗ Email failed: {e}")
             return False
     
     def _create_text_report(self, stats: Dict, errors: List[str] = None) -> str:
@@ -126,13 +125,16 @@ class EmailNotifier:
             f"  Processed: {stats.get('processed', 0)}",
             f"  Successful: {stats.get('successful', 0)}",
             f"  Failed: {stats.get('failed', 0)}",
-            f"  Moved: {stats.get('moved', 0)}",
+            f"  Moved to Processed: {stats.get('moved', 0)}",
+            f"  Moved to Failed: {stats.get('moved_to_failed', 0)}",
             f"  Deleted: {stats.get('deleted', 0)}",
         ]
         
         if stats.get('processed', 0) > 0:
             success_rate = (stats['successful'] / stats['processed']) * 100
+            error_rate = (stats['failed'] / stats['processed']) * 100
             lines.append(f"  Success Rate: {success_rate:.1f}%")
+            lines.append(f"  Error Rate: {error_rate:.1f}%")
         
         if errors:
             lines.extend(["", "ERRORS:", "-" * 80])
@@ -146,75 +148,96 @@ class EmailNotifier:
     def _create_html_report(self, stats: Dict, errors: List[str] = None) -> str:
         """HTML report"""
         success_rate = 0
+        error_rate = 0
         if stats.get('processed', 0) > 0:
             success_rate = (stats['successful'] / stats['processed']) * 100
+            error_rate = (stats['failed'] / stats['processed']) * 100
         
         status_color = "#28a745" if success_rate >= 90 else "#ffc107" if success_rate >= 70 else "#dc3545"
         
         html = f"""
-        <html>
-        <body style="font-family: Arial, sans-serif; line-height: 1.6; color: #333;">
-            <div style="max-width: 600px; margin: 0 auto; padding: 20px;">
-                <h2 style="color: #2c3e50; border-bottom: 3px solid #3498db; padding-bottom: 10px;">
-                    Whisper Processing Report
-                </h2>
-                
-                <div style="background-color: #f8f9fa; padding: 15px; border-radius: 5px; margin: 20px 0;">
-                    <p style="margin: 5px 0;"><strong>Time:</strong> {stats.get('start_time', 'N/A')}</p>
-                    <p style="margin: 5px 0;"><strong>Duration:</strong> {stats.get('duration_minutes', 0):.1f} minutes</p>
-                </div>
-                
-                <h3 style="color: #2c3e50; margin-top: 30px;">Results</h3>
-                <table style="width: 100%; border-collapse: collapse; margin: 15px 0;">
-                    <tr style="background-color: #ecf0f1;">
-                        <td style="padding: 10px; border: 1px solid #ddd;"><strong>Processed</strong></td>
-                        <td style="padding: 10px; border: 1px solid #ddd; text-align: right;">{stats.get('processed', 0)}</td>
-                    </tr>
-                    <tr style="background-color: #d4edda;">
-                        <td style="padding: 10px; border: 1px solid #ddd;"><strong>Successful</strong></td>
-                        <td style="padding: 10px; border: 1px solid #ddd; text-align: right; color: #28a745;">{stats.get('successful', 0)}</td>
-                    </tr>
-                    <tr style="background-color: #f8d7da;">
-                        <td style="padding: 10px; border: 1px solid #ddd;"><strong>Failed</strong></td>
-                        <td style="padding: 10px; border: 1px solid #ddd; text-align: right; color: #dc3545;">{stats.get('failed', 0)}</td>
-                    </tr>
-                    <tr>
-                        <td style="padding: 10px; border: 1px solid #ddd;"><strong>Moved</strong></td>
-                        <td style="padding: 10px; border: 1px solid #ddd; text-align: right;">{stats.get('moved', 0)}</td>
-                    </tr>
-                    <tr>
-                        <td style="padding: 10px; border: 1px solid #ddd;"><strong>Deleted</strong></td>
-                        <td style="padding: 10px; border: 1px solid #ddd; text-align: right;">{stats.get('deleted', 0)}</td>
-                    </tr>
-                    <tr>
-                        <td style="padding: 10px; border: 1px solid #ddd;"><strong>Success Rate</strong></td>
-                        <td style="padding: 10px; border: 1px solid #ddd; text-align: right; color: {status_color}; font-weight: bold;">{success_rate:.1f}%</td>
-                    </tr>
-                </table>
-        """
+<!DOCTYPE html>
+<html>
+<head>
+    <style>
+        body {{ font-family: Arial, sans-serif; margin: 20px; background: #f5f5f5; }}
+        .container {{ background: white; padding: 30px; border-radius: 8px; max-width: 800px; margin: 0 auto; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }}
+        h1 {{ color: #333; border-bottom: 3px solid #007bff; padding-bottom: 10px; }}
+        .meta {{ color: #666; margin: 20px 0; }}
+        .stats {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 15px; margin: 20px 0; }}
+        .stat {{ background: #f8f9fa; padding: 15px; border-radius: 6px; text-align: center; }}
+        .stat-label {{ font-size: 12px; color: #666; text-transform: uppercase; }}
+        .stat-value {{ font-size: 24px; font-weight: bold; color: #333; margin: 5px 0; }}
+        .success-rate {{ background: {status_color}; color: white; padding: 20px; border-radius: 6px; text-align: center; margin: 20px 0; }}
+        .success-rate .value {{ font-size: 36px; font-weight: bold; }}
+        .errors {{ background: #fff3cd; border-left: 4px solid #ffc107; padding: 15px; margin: 20px 0; }}
+        .errors h2 {{ color: #856404; margin-top: 0; }}
+        .error-list {{ list-style: none; padding: 0; }}
+        .error-list li {{ padding: 8px; margin: 5px 0; background: white; border-radius: 4px; }}
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🎙️ Whisper Processing Report</h1>
+        <div class="meta">
+            <strong>Time:</strong> {stats.get('start_time', 'N/A')}<br>
+            <strong>Duration:</strong> {stats.get('duration_minutes', 0):.1f} minutes
+        </div>
+        
+        <h2>Results</h2>
+        <div class="stats">
+            <div class="stat">
+                <div class="stat-label">Processed</div>
+                <div class="stat-value">{stats.get('processed', 0)}</div>
+            </div>
+            <div class="stat">
+                <div class="stat-label">Successful</div>
+                <div class="stat-value">{stats.get('successful', 0)}</div>
+            </div>
+            <div class="stat">
+                <div class="stat-label">Failed</div>
+                <div class="stat-value">{stats.get('failed', 0)}</div>
+            </div>
+            <div class="stat">
+                <div class="stat-label">Moved to Processed</div>
+                <div class="stat-value">{stats.get('moved', 0)}</div>
+            </div>
+            <div class="stat">
+                <div class="stat-label">Moved to Failed</div>
+                <div class="stat-value">{stats.get('moved_to_failed', 0)}</div>
+            </div>
+            <div class="stat">
+                <div class="stat-label">Deleted</div>
+                <div class="stat-value">{stats.get('deleted', 0)}</div>
+            </div>
+        </div>
+        
+        <div class="success-rate">
+            <div class="stat-label" style="color: rgba(255,255,255,0.9);">Success Rate</div>
+            <div class="value">{success_rate:.1f}%</div>
+            <div class="stat-label" style="color: rgba(255,255,255,0.9);">Error Rate: {error_rate:.1f}%</div>
+        </div>
+"""
         
         if errors:
             html += f"""
-                <h3 style="color: #dc3545; margin-top: 30px;">⚠ Errors</h3>
-                <div style="background-color: #f8d7da; border-left: 4px solid #dc3545; padding: 15px;">
-                    <ul style="margin: 0; padding-left: 20px;">
-            """
+        <div class="errors">
+            <h2>⚠️ Errors</h2>
+            <ul class="error-list">
+"""
             for err in errors[:10]:
-                html += f"<li style='margin: 5px 0;'>{err}</li>"
+                html += f"                <li>{err}</li>\n"
             if len(errors) > 10:
-                html += f"<li style='font-style: italic;'>... and {len(errors)-10} more</li>"
-            html += "</ul></div>"
+                html += f"                <li><em>... and {len(errors)-10} more</em></li>\n"
+            html += """            </ul>
+        </div>
+"""
         
-        html += """
-            </div>
-        </body>
-        </html>
-        """
-        
+        html += """    </div>
+</body>
+</html>
+"""
         return html
-
-
-
 
 class AzureProcessor:
     """
@@ -222,8 +245,7 @@ class AzureProcessor:
     No database - uses blob existence to determine processing status
     """
     
-    AUDIO_EXTENSIONS = {'.mp3', '.wav', '.m4a', '.flac', '.ogg', 
-                       '.MP3', '.WAV', '.M4A', '.FLAC', '.OGG'}
+    AUDIO_EXTENSIONS = {'.mp3', '.wav', '.m4a', '.flac', '.ogg', '.MP3', '.WAV', '.M4A', '.FLAC', '.OGG'}
     
     def __init__(self):
         Config.validate()
@@ -241,6 +263,7 @@ class AzureProcessor:
             'successful': 0,
             'failed': 0,
             'moved': 0,
+            'moved_to_failed': 0,
             'deleted': 0,
             'errors': []
         }
@@ -257,7 +280,7 @@ class AzureProcessor:
         
         try:
             blob = self.blob_client.get_blob_client(
-                Config.TRANSCRIPTIONS_CONTAINER,
+                Config.TRANSCRIPTIONS_CONTAINER, 
                 transcription_name
             )
             blob.get_blob_properties()
@@ -271,7 +294,6 @@ class AzureProcessor:
     def find_pending_files(self) -> List[str]:
         """Find all unprocessed audio files"""
         container = self.blob_client.get_container_client(Config.RECORDINGS_CONTAINER)
-        
         pending = []
         orphans = []  # Has transcription but not moved
         total = 0
@@ -314,7 +336,6 @@ class AzureProcessor:
     def _cleanup_orphans(self, orphans: List[str]):
         """Move orphaned files (transcribed but not moved)"""
         print("Cleaning up orphaned files...")
-        
         for blob_name in orphans:
             try:
                 # Download
@@ -331,10 +352,9 @@ class AzureProcessor:
                     print(f"  ✓ Moved: {blob_name}")
                 else:
                     print(f"  ⚠ Size mismatch: {blob_name}")
-                    
+            
             except Exception as e:
                 print(f"  ✗ Failed: {blob_name} - {e}")
-        
         print()
     
     def process_file(self, blob_name: str, processor) -> Dict:
@@ -344,7 +364,8 @@ class AzureProcessor:
         result = {
             'blob_name': blob_name,
             'success': False,
-            'error': None
+            'error': None,
+            'whisper_result': None
         }
         
         try:
@@ -353,18 +374,23 @@ class AzureProcessor:
             blob = self.blob_client.get_blob_client(Config.RECORDINGS_CONTAINER, blob_name)
             with open(local_path, 'wb') as f:
                 f.write(blob.download_blob().readall())
-            
             size = local_path.stat().st_size
-            print(f"        ✓ Downloaded ({size:,} bytes)")
+            print(f"  ✓ Downloaded ({size:,} bytes)")
             
             # Process with Whisper
             print("  [2/3] Processing...")
             whisper_result = processor.process_audio_file(str(local_path))
+            result['whisper_result'] = whisper_result
             
             if whisper_result.get('status') != 'success':
                 raise ValueError(whisper_result.get('error', 'Processing failed'))
             
-            print(f"        ✓ Processed ({whisper_result.get('word_count', 0)} words)")
+            # Check if translation is empty or whitespace-only
+            translation = whisper_result.get('translation', '').strip()
+            if not translation:
+                raise ValueError("Translation is empty or contains only whitespace")
+            
+            print(f"  ✓ Processed ({whisper_result.get('word_count', 0)} words)")
             
             # Upload transcription
             print("  [3/3] Uploading transcription...")
@@ -377,13 +403,14 @@ class AzureProcessor:
                 json.dumps(whisper_result, indent=2, ensure_ascii=False).encode('utf-8'),
                 overwrite=True
             )
-            print(f"        ✓ Uploaded")
+            print(f"  ✓ Uploaded")
             
             result['success'] = True
             result['local_path'] = str(local_path)
-            
+        
         except Exception as e:
             result['error'] = str(e)
+            result['local_path'] = str(local_path)
             print(f"  ✗ Failed: {e}")
             self.stats['errors'].append(f"{blob_name}: {e}")
         
@@ -395,14 +422,13 @@ class AzureProcessor:
             return
         
         print("\n" + "="*80)
-        print("BATCH MOVE & DELETE")
+        print("BATCH MOVE & DELETE (SUCCESSFUL)")
         print("="*80)
         print(f"Files: {len(successful_files)}\n")
         
         # Move to processed
         print("[1/2] Moving to processed...")
         moved = []
-        
         for file_info in successful_files:
             blob_name = file_info['blob_name']
             local_path = Path(file_info['local_path'])
@@ -411,18 +437,15 @@ class AzureProcessor:
                 dest = self.blob_client.get_blob_client(Config.PROCESSED_CONTAINER, blob_name)
                 with open(local_path, 'rb') as f:
                     dest.upload_blob(f, overwrite=True)
-                
                 moved.append(blob_name)
                 self.stats['moved'] += 1
                 print(f"  ✓ {blob_name}")
-                
             except Exception as e:
                 print(f"  ✗ {blob_name}: {e}")
                 self.stats['errors'].append(f"Move failed: {blob_name}")
         
         # Delete from recordings
         print(f"\n[2/2] Deleting from recordings...")
-        
         for blob_name in moved:
             try:
                 source = self.blob_client.get_blob_client(Config.RECORDINGS_CONTAINER, blob_name)
@@ -435,7 +458,6 @@ class AzureProcessor:
                     print(f"  ✓ {blob_name}")
                 else:
                     print(f"  ⚠ Size mismatch: {blob_name}")
-                    
             except Exception as e:
                 print(f"  ✗ {blob_name}: {e}")
                 self.stats['errors'].append(f"Delete failed: {blob_name}")
@@ -444,6 +466,59 @@ class AzureProcessor:
         for file_info in successful_files:
             try:
                 Path(file_info['local_path']).unlink()
+            except:
+                pass
+        
+        print("="*80 + "\n")
+    
+    def move_to_failed(self, failed_files: List[Dict]):
+        """Batch move failed recordings to failed container"""
+        if not failed_files:
+            return
+        
+        print("\n" + "="*80)
+        print("BATCH MOVE TO FAILED")
+        print("="*80)
+        print(f"Files: {len(failed_files)}\n")
+        
+        for file_info in failed_files:
+            blob_name = file_info['blob_name']
+            local_path = Path(file_info['local_path'])
+            
+            try:
+                # Upload to failed container
+                dest = self.blob_client.get_blob_client(Config.FAILED_CONTAINER, blob_name)
+                with open(local_path, 'rb') as f:
+                    dest.upload_blob(f, overwrite=True)
+                
+                # Upload error metadata
+                error_meta = {
+                    'filename': blob_name,
+                    'error': file_info.get('error'),
+                    'timestamp': datetime.now().isoformat(),
+                    'whisper_result': file_info.get('whisper_result')
+                }
+                meta_name = blob_name.rsplit('.', 1)[0] + '_error.json'
+                meta_blob = self.blob_client.get_blob_client(Config.FAILED_CONTAINER, meta_name)
+                meta_blob.upload_blob(
+                    json.dumps(error_meta, indent=2, ensure_ascii=False).encode('utf-8'),
+                    overwrite=True
+                )
+                
+                # Delete from recordings
+                source = self.blob_client.get_blob_client(Config.RECORDINGS_CONTAINER, blob_name)
+                source.delete_blob()
+                
+                self.stats['moved_to_failed'] += 1
+                print(f"  ✓ {blob_name}")
+            
+            except Exception as e:
+                print(f"  ✗ {blob_name}: {e}")
+                self.stats['errors'].append(f"Move to failed failed: {blob_name}")
+            
+            # Cleanup temp file
+            try:
+                local_path.unlink()
             except:
                 pass
         
@@ -465,9 +540,6 @@ class AzureProcessor:
         
         if not pending:
             print("✓ No pending files\n")
-            if self.email.enabled:
-                self.stats['duration_minutes'] = (time.time() - start_time) / 60
-                self.email.send_report(self.stats)
             return self.stats
         
         total_files = len(pending)
@@ -500,11 +572,12 @@ class AzureProcessor:
             print("="*80 + "\n")
             
             successful = []
+            failed = []
             
             for idx, blob_name in enumerate(batch_files, 1):
                 print(f"[{idx}/{len(batch_files)}] {blob_name}")
-                
                 result = self.process_file(blob_name, processor)
+                
                 self.stats['processed'] += 1
                 
                 if result['success']:
@@ -513,11 +586,16 @@ class AzureProcessor:
                     print("  ✓ SUCCESS\n")
                 else:
                     self.stats['failed'] += 1
+                    failed.append(result)
                     print(f"  ✗ FAILED\n")
             
-            # Move and delete successful files
+            # Move successful files to processed
             if successful:
                 self.move_and_delete(successful)
+            
+            # Move failed files to failed container
+            if failed:
+                self.move_to_failed(failed)
         
         # Final summary
         duration = time.time() - start_time
@@ -530,29 +608,30 @@ class AzureProcessor:
         print(f"Processed: {self.stats['processed']}")
         print(f"Successful: {self.stats['successful']}")
         print(f"Failed: {self.stats['failed']}")
-        print(f"Moved: {self.stats['moved']}")
+        print(f"Moved to Processed: {self.stats['moved']}")
+        print(f"Moved to Failed: {self.stats['moved_to_failed']}")
         print(f"Deleted: {self.stats['deleted']}")
         
         if self.stats['processed'] > 0:
-            rate = (self.stats['successful'] / self.stats['processed']) * 100
-            print(f"Success Rate: {rate:.1f}%")
+            success_rate = (self.stats['successful'] / self.stats['processed']) * 100
+            error_rate = (self.stats['failed'] / self.stats['processed']) * 100
+            print(f"Success Rate: {success_rate:.1f}%")
+            print(f"Error Rate: {error_rate:.1f}%")
         
         print("="*80 + "\n")
         
-        # Send email report
+        # Send email report only if recordings were processed
         if self.email.enabled:
             self.email.send_report(self.stats, self.stats['errors'])
         
         return self.stats
 
-
-
-
 def main():
     parser = argparse.ArgumentParser(description='Azure Whisper Processor')
-    parser.add_argument('command', choices=['process', 'test-email'], help='Command to run')
-    parser.add_argument('--batch-size', type=int, help='Override batch size')
-    
+    parser.add_argument('command', choices=['process', 'test-email'], 
+                       help='Command to run')
+    parser.add_argument('--batch-size', type=int, 
+                       help='Override batch size')
     args = parser.parse_args()
     
     try:
@@ -570,6 +649,7 @@ def main():
                 'successful': 9,
                 'failed': 1,
                 'moved': 9,
+                'moved_to_failed': 1,
                 'deleted': 8
             }
             test_errors = ['Test error 1', 'Test error 2']
@@ -582,7 +662,6 @@ def main():
         print(f"\nError: {e}")
         traceback.print_exc()
         sys.exit(1)
-
 
 if __name__ == "__main__":
     main()
